@@ -3,139 +3,204 @@ import pandas as pd
 import plotly.express as px
 
 # --- Configuration de la page ---
-st.set_page_config(page_title="Dashboard Yassir/Commandes", layout="wide")
-st.title("📊 Tableau de Bord Stratégique")
+st.set_page_config(page_title="Dashboard Yassir - Business Intelligence", layout="wide")
+st.title("📊 Dashboard Stratégique & Opérationnel")
 
 # --- Zone d'upload ---
 uploaded_file = st.file_uploader("Uploadez votre fichier CSV (Export Admin)", type=['csv'])
 
 if uploaded_file is not None:
-    # Lecture des données
+    # 1. Lecture et Nettoyage des données
     df = pd.read_csv(uploaded_file, low_memory=False)
     
-    # Création des 3 onglets principaux
+    # Nettoyage de base pour s'assurer que les valeurs financières sont des nombres
+    df['item total'] = pd.to_numeric(df['item total'], errors='coerce').fillna(0)
+    df['delivery time(M)'] = pd.to_numeric(df['delivery time(M)'], errors='coerce')
+    
+    # Création des 3 onglets
     tab_sales, tab_marketing, tab_ops = st.tabs(["💰 Sales (Ventes)", "🎯 Marketing", "⚙️ Opérations (Logistique)"])
 
     # ==========================================
-    # ONGLET 1 : SALES (VENTES & FINANCES)
+    # ONGLET 1 : SALES (VENTES & PERFORMANCES)
     # ==========================================
     with tab_sales:
-        st.header("Performance des Ventes & Chiffre d'Affaires")
+        st.header("Analyse des Ventes (GMV, AOV, Volume)")
         
-        # KPIs Sales
+        # --- KPIs SALES ---
+        requests = len(df)
+        delivered = len(df[df['status'] == 'Delivered'])
+        gmv = df['item total'].sum()
+        aov = gmv / requests if requests > 0 else 0
+        
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Total Commandes", len(df))
-        col2.metric("Chiffre d'Affaires Global", f"{df['item total'].sum():,.2f} MAD")
-        col3.metric("Revenus Admin Nets", f"{df['admin earnings'].sum():,.2f} MAD")
-        col4.metric("Panier Moyen", f"{df['item total'].mean():,.2f} MAD")
-        
+        col1.metric("Requests (Total Commandes)", f"{requests:,}")
+        col2.metric("Delivered (Livrées)", f"{delivered:,}")
+        col3.metric("GMV (Chiffre d'Affaires)", f"{gmv:,.2f} MAD")
+        col4.metric("AOV (Panier Moyen)", f"{aov:,.2f} MAD")
         st.divider()
+
+        # --- CHARTS : TOP 10 RESTAURANTS ---
+        st.subheader("🏆 Top 10 Restaurants")
+        # Agrégation par restaurant
+        rest_stats = df.groupby('restaurant name').agg(
+            Requests=('order id', 'count'),
+            GMV=('item total', 'sum')
+        ).reset_index()
+        rest_stats['AOV'] = rest_stats['GMV'] / rest_stats['Requests']
+
+        col_r1, col_r2, col_r3 = st.columns(3)
+        with col_r1:
+            top_gmv = rest_stats.nlargest(10, 'GMV')
+            fig_r1 = px.bar(top_gmv, x='GMV', y='restaurant name', orientation='h', title="Par GMV", color='GMV', color_continuous_scale='Blues')
+            fig_r1.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_r1, use_container_width=True)
+            
+        with col_r2:
+            top_aov = rest_stats.nlargest(10, 'AOV')
+            fig_r2 = px.bar(top_aov, x='AOV', y='restaurant name', orientation='h', title="Par AOV (Panier Moyen)", color='AOV', color_continuous_scale='Greens')
+            fig_r2.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_r2, use_container_width=True)
+
+        with col_r3:
+            top_req = rest_stats.nlargest(10, 'Requests')
+            fig_r3 = px.bar(top_req, x='Requests', y='restaurant name', orientation='h', title="Par Requests (Volume)", color='Requests', color_continuous_scale='Oranges')
+            fig_r3.update_layout(yaxis={'categoryorder':'total ascending'})
+            st.plotly_chart(fig_r3, use_container_width=True)
+
+        st.divider()
+
+        # --- CHARTS : CITY & AREA ---
+        st.subheader("📍 Performance par Ville et Quartier (City & Area)")
         
-        col_a, col_b = st.columns(2)
-        with col_a:
-            st.subheader("📈 Évolution du CA par Jour")
-            df_revenue = df.groupby('order day')['item total'].sum().reset_index()
-            fig_ca = px.line(df_revenue, x='order day', y='item total', markers=True, color_discrete_sequence=['#2E86C1'])
-            st.plotly_chart(fig_ca, use_container_width=True)
+        # Agrégation par Ville
+        city_stats = df.groupby('city').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
+        city_stats['AOV'] = city_stats['GMV'] / city_stats['Requests']
+        
+        # Agrégation par Area
+        area_stats = df.groupby('Area').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
+        area_stats['AOV'] = area_stats['GMV'] / area_stats['Requests']
 
-        with col_b:
-            st.subheader("🏆 Top 10 Restaurants (par volume de commandes)")
-            top_rests = df['restaurant name'].value_counts().head(10).reset_index()
-            top_rests.columns = ['Restaurant', 'Commandes']
-            fig_rests = px.bar(top_rests, x='Commandes', y='Restaurant', orientation='h', color='Commandes', color_continuous_scale='Blues')
-            fig_rests.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_rests, use_container_width=True)
+        col_c1, col_c2 = st.columns(2)
+        with col_c1:
+            fig_city = px.bar(city_stats, x='city', y=['GMV', 'Requests', 'AOV'], barmode='group', title="Métriques par Ville (City)")
+            st.plotly_chart(fig_city, use_container_width=True)
+        with col_c2:
+            fig_area = px.scatter(area_stats, x='Requests', y='GMV', size='AOV', color='Area', title="Quartiers (Area) : GMV vs Requests (Taille = AOV)")
+            st.plotly_chart(fig_area, use_container_width=True)
 
-        st.subheader("💳 Méthodes de Paiement")
-        payment_counts = df['Payment Method'].value_counts().reset_index()
-        payment_counts.columns = ['Méthode', 'Total']
-        fig_pay = px.pie(payment_counts, values='Total', names='Méthode', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
-        st.plotly_chart(fig_pay, use_container_width=True)
+        st.divider()
+
+        # --- TABLEAU DE BORD RESTAURANTS (AVEC FILTRES) ---
+        st.subheader("📋 Listing Détaillé des Restaurants")
+        
+        # Filtres UI
+        col_f1, col_f2 = st.columns(2)
+        ville_filter = col_f1.multiselect("Filtrer par Ville", options=df['city'].dropna().unique())
+        area_filter = col_f2.multiselect("Filtrer par Quartier", options=df['Area'].dropna().unique())
+        
+        # Application des filtres sur la donnée brute
+        df_filtered = df.copy()
+        if ville_filter:
+            df_filtered = df_filtered[df_filtered['city'].isin(ville_filter)]
+        if area_filter:
+            df_filtered = df_filtered[df_filtered['Area'].isin(area_filter)]
+
+        # Création du tableau final
+        table_rest = df_filtered.groupby(['restaurant name', 'city', 'Area']).agg(
+            Requests=('order id', 'count'),
+            Delivered=('status', lambda x: (x == 'Delivered').sum()),
+            GMV=('item total', 'sum')
+        ).reset_index()
+        table_rest['AOV'] = (table_rest['GMV'] / table_rest['Requests']).round(2)
+        table_rest['Taux de Livraison (%)'] = ((table_rest['Delivered'] / table_rest['Requests']) * 100).round(1)
+        
+        # Affichage du tableau interactif (Streamlit permet de trier en cliquant sur les colonnes)
+        st.dataframe(table_rest.sort_values(by='GMV', ascending=False), use_container_width=True)
 
 
     # ==========================================
-    # ONGLET 2 : MARKETING (CLIENTS, PROMOS, ZONES)
+    # ONGLET 2 : MARKETING (ACQUISITION & PROMOS)
     # ==========================================
     with tab_marketing:
-        st.header("Analyse Marketing & Acquisition")
-        
-        # Remplacer les valeurs nulles pour les réductions
-        df['Discount Amount'] = df['Discount Amount'].fillna(0)
+        st.header("Marketing : Utilisateurs & Promotions")
         
         # KPIs Marketing
-        col1, col2, col3 = st.columns(3)
-        col1.metric("Commandes avec Réduction", len(df[df['Discount Amount'] > 0]))
-        col2.metric("Total des Réductions Accordées", f"{df['Discount Amount'].sum():,.2f} MAD")
-        col3.metric("Abonnements Yassir+ (Commandes)", len(df[df['Yassir+ Subscription Fee'] > 0]))
+        unique_users = df['customer Phone'].nunique() # Proxy pour les utilisateurs uniques
+        total_coupons_used = len(df[df['coupon'].notna() & (df['coupon'] != ' ')])
         
+        col_m1, col_m2, col_m3 = st.columns(3)
+        col_m1.metric("Utilisateurs Uniques (Reach)", f"{unique_users:,}")
+        col_m2.metric("Commandes avec Code Promo", f"{total_coupons_used:,}")
+        col_m3.metric("Ratio d'utilisation Promo", f"{(total_coupons_used / requests * 100):.1f} %")
         st.divider()
 
-        col_c, col_d = st.columns(2)
-        with col_c:
-            st.subheader("📍 Top Quartiers (Acquisition par zone)")
-            top_areas = df['Area'].value_counts().head(10).reset_index()
-            top_areas.columns = ['Quartier', 'Commandes']
-            fig_areas = px.bar(top_areas, x='Commandes', y='Quartier', orientation='h', color='Commandes', color_continuous_scale='Purples')
-            fig_areas.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_areas, use_container_width=True)
-
-        with col_d:
-            st.subheader("🍔 Top Catégories de Repas")
-            # Nettoyage rapide de la colonne catégorie
-            df_food = df['Food Category'].dropna().value_counts().head(10).reset_index()
-            df_food.columns = ['Catégorie', 'Total']
-            fig_food = px.bar(df_food, x='Total', y='Catégorie', orientation='h', color_discrete_sequence=['#9B59B6'])
-            fig_food.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_food, use_container_width=True)
+        # Analyse des Coupons
+        st.subheader("🎟️ Performance des Codes Promo (Coupons)")
+        df_coupons = df[df['coupon'].notna() & (df['coupon'] != ' ')]
+        
+        if not df_coupons.empty:
+            coupon_stats = df_coupons.groupby('coupon').agg(
+                Utilisations=('order id', 'count'),
+                Total_Discount=('Discount Amount', 'sum')
+            ).reset_index()
+            
+            col_m4, col_m5 = st.columns(2)
+            with col_m4:
+                fig_coup1 = px.bar(coupon_stats.nlargest(10, 'Utilisations'), x='Utilisations', y='coupon', orientation='h', title="Top 10 Coupons (par Utilisation)", color='Utilisations', color_continuous_scale='Purples')
+                fig_coup1.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_coup1, use_container_width=True)
+            with col_m5:
+                fig_coup2 = px.bar(coupon_stats.nlargest(10, 'Total_Discount'), x='Total_Discount', y='coupon', orientation='h', title="Coût par Coupon (Total Discount)", color='Total_Discount', color_continuous_scale='Reds')
+                fig_coup2.update_layout(yaxis={'categoryorder':'total ascending'})
+                st.plotly_chart(fig_coup2, use_container_width=True)
+        else:
+            st.info("Aucune donnée de coupon (Code Promo) trouvée dans cet export.")
 
 
     # ==========================================
     # ONGLET 3 : OPÉRATIONS (LOGISTIQUE & LIVRAISONS)
     # ==========================================
     with tab_ops:
-        st.header("Logistique & Performance de Livraison")
+        st.header("Opérations : Logistique, Flotte & Annulations")
         
         # KPIs Ops
-        col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Temps de Livraison Moyen", f"{df['delivery time(M)'].mean():,.0f} min")
-        col2.metric("Distance Moyenne", f"{df['Distance travel'].mean():,.1f} km")
-        col3.metric("Total Dépenses Livreurs", f"{df['driver payout'].sum():,.2f} MAD")
-        col4.metric("Taux d'Annulation", f"{(len(df[df['status'] == 'Cancelled']) / len(df) * 100):.1f} %")
+        avg_delivery_time = df['delivery time(M)'].mean()
+        cancellations = len(df[df['status'] == 'Cancelled'])
+        cancel_rate = (cancellations / requests * 100) if requests > 0 else 0
         
+        col_o1, col_o2, col_o3, col_o4 = st.columns(4)
+        col_o1.metric("Temps de Livraison Moyen", f"{avg_delivery_time:.1f} min")
+        col_o2.metric("Distance Moyenne", f"{df['Distance travel'].mean():.2f} km")
+        col_o3.metric("Commandes Annulées", f"{cancellations:,}")
+        col_o4.metric("Taux d'Annulation", f"{cancel_rate:.2f} %")
         st.divider()
 
-        col_e, col_f = st.columns(2)
-        with col_e:
-            st.subheader("📦 Entonnoir des Statuts de Commande")
-            status_counts = df['status'].value_counts().reset_index()
-            status_counts.columns = ['Statut', 'Total']
-            fig_status = px.funnel(status_counts, x='Total', y='Statut', color_discrete_sequence=['#E67E22'])
-            st.plotly_chart(fig_status, use_container_width=True)
+        # Graphiques Ops
+        col_o5, col_o6 = st.columns(2)
+        
+        with col_o5:
+            st.subheader("⚠️ Motifs d'Annulation (Cancellation Reasons)")
+            df_cancel = df[df['cancellation reason '].notna() & (df['cancellation reason '] != ' ') & (df['cancellation reason '] != 'N/A')]
+            if not df_cancel.empty:
+                cancel_stats = df_cancel['cancellation reason '].value_counts().reset_index()
+                cancel_stats.columns = ['Motif', 'Nombre']
+                fig_cancel = px.pie(cancel_stats, values='Nombre', names='Motif', hole=0.4, color_discrete_sequence=px.colors.qualitative.Pastel)
+                st.plotly_chart(fig_cancel, use_container_width=True)
+            else:
+                st.info("Pas assez de données sur les motifs d'annulation.")
 
-        with col_f:
-            st.subheader("⏰ Heures de Pointe (Rush Hours)")
-            df['hour'] = pd.to_datetime(df['order time'], format='%H:%M:%S', errors='coerce').dt.hour
-            hour_counts = df['hour'].value_counts().sort_index().reset_index()
-            hour_counts.columns = ['Heure', 'Commandes']
-            fig_rush = px.bar(hour_counts, x='Heure', y='Commandes', color_discrete_sequence=['#F1C40F'])
-            st.plotly_chart(fig_rush, use_container_width=True)
+        with col_o6:
+            st.subheader("🛵 Performance par Type de Coursier")
+            driver_stats = df.groupby('Driver Type').agg(
+                Commandes=('order id', 'count'),
+                Temps_Moyen=('delivery time(M)', 'mean')
+            ).reset_index()
+            fig_driver = px.bar(driver_stats, x='Driver Type', y=['Commandes', 'Temps_Moyen'], barmode='group', title="Volume vs Temps de livraison par Contrat")
+            st.plotly_chart(fig_driver, use_container_width=True)
 
-        col_g, col_h = st.columns(2)
-        with col_g:
-            st.subheader("🛵 Profils de la Flotte (Type de Livreurs)")
-            driver_types = df['Driver Type'].value_counts().reset_index()
-            driver_types.columns = ['Type', 'Total']
-            fig_drivers = px.pie(driver_types, values='Total', names='Type', hole=0.3, color_discrete_sequence=px.colors.qualitative.Set2)
-            st.plotly_chart(fig_drivers, use_container_width=True)
-            
-        with col_h:
-            st.subheader("⚠️ Top Raisons d'Annulation")
-            df_cancel = df[df['cancellation reason '].notna() & (df['cancellation reason '] != ' ')]
-            cancel_reasons = df_cancel['cancellation reason '].value_counts().head(5).reset_index()
-            cancel_reasons.columns = ['Raison', 'Total']
-            fig_cancel = px.bar(cancel_reasons, x='Total', y='Raison', orientation='h', color_discrete_sequence=['#E74C3C'])
-            fig_cancel.update_layout(yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_cancel, use_container_width=True)
+        st.subheader("⏱️ Distribution des Temps de Livraison")
+        fig_time = px.histogram(df, x='delivery time(M)', nbins=40, title="Répartition du temps de livraison (en minutes)", color_discrete_sequence=['#1ABC9C'])
+        st.plotly_chart(fig_time, use_container_width=True)
 
 else:
-    st.info("Veuillez uploader un fichier CSV pour générer les tableaux de bord (Sales, Marketing, Ops).")
+    st.info("Veuillez uploader un fichier CSV pour générer l'analyse complète (Sales, Marketing, Ops).")
