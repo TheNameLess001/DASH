@@ -24,12 +24,13 @@ def load_data(file):
     df['_date'] = pd.to_datetime(df['order day'], errors='coerce')
     
     # --- REGLES METIERS ---
-    # 1. Suppression des restaurants de "test" / "fixe" / "avance"
-    mots_a_bannir = ['test', 'fixe', 'avance']
+    # 1. Suppression stricte des restaurants de test, fixe, p fixe, avance
+    mots_a_bannir = ['test', 'fixe', 'p fixe', 'avance']
     pattern = '|'.join(mots_a_bannir)
-    df = df[~df['restaurant name'].str.contains(pattern, case=False, na=False)]
+    df = df[~df['restaurant name'].astype(str).str.contains(pattern, case=False, na=False)]
     
-    # 2. Regroupement des franchises (Points de ventes multiples)
+    # 2. Regroupement des franchises/chaînes (Points de ventes multiples)
+    # Ex: "McDonald's - Hermitage" devient "McDonald's"
     df['restaurant name'] = df['restaurant name'].astype(str).str.split(' - ').str[0].str.strip()
 
     return df
@@ -165,7 +166,7 @@ else:
             st.markdown("---")
 
             # --- Top 15 Restaurants Charts ---
-            st.subheader("🏆 Classement des Enseignes (Top 15 - Multi-points de vente groupés)")
+            st.subheader("🏆 Classement des Enseignes (Top 15 Chaînes)")
             rest_stats = cw_df.groupby('restaurant name').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
             rest_stats['AOV'] = (rest_stats['GMV'] / rest_stats['Requests']).round(2)
             rest_stats['GMV'] = rest_stats['GMV'].round(2)
@@ -191,9 +192,25 @@ else:
                 st.dataframe(top_r_req[['restaurant name', 'Requests']], use_container_width=True, hide_index=True)
             st.markdown("---")
 
-            # --- Tableau Global des Restaurants ---
-            st.subheader("📋 Répertoire Détaillé des Enseignes")
-            with st.expander("🔍 Ouvrir les filtres du tableau"):
+            # --- TABLEAU 1 : Résumé Global par Chaîne ---
+            st.subheader("🏢 Résumé Global par Enseigne (Chaînes consolidées)")
+            st.markdown("Ce tableau regroupe les performances globales de chaque chaîne, tous points de vente et toutes villes confondues.")
+            
+            chain_summary = cw_df.groupby('restaurant name').agg(
+                Requests=('order id', 'count'),
+                Delivered=('status', lambda x: (x == 'Delivered').sum()),
+                GMV=('item total', 'sum')
+            ).reset_index()
+            chain_summary['AOV (MAD)'] = (chain_summary['GMV'] / chain_summary['Requests']).round(2)
+            chain_summary['Taux Livraison (%)'] = ((chain_summary['Delivered'] / chain_summary['Requests']) * 100).round(1)
+            chain_summary['GMV'] = chain_summary['GMV'].round(2)
+            
+            # Affichage interactif Streamlit pour le tableau global
+            st.dataframe(chain_summary.sort_values(by='GMV', ascending=False), use_container_width=True, hide_index=True)
+
+            # --- TABLEAU 2 : Détail avec filtres Géographiques ---
+            st.subheader("📋 Détail des Enseignes par Zone (Filtrable)")
+            with st.expander("🔍 Ouvrir les filtres géographiques du tableau détaillé"):
                 col_f1, col_f2 = st.columns(2)
                 ville_filter = col_f1.multiselect("Filtrer par Ville", options=cw_df['city'].dropna().unique())
                 area_filter = col_f2.multiselect("Filtrer par Quartier", options=cw_df['Area'].dropna().unique())
@@ -210,6 +227,7 @@ else:
                 ).reset_index()
                 table_rest['AOV (MAD)'] = (table_rest['GMV'] / table_rest['Requests']).round(2)
                 table_rest['Taux Livraison (%)'] = ((table_rest['Delivered'] / table_rest['Requests']) * 100).round(1)
+                table_rest['GMV'] = table_rest['GMV'].round(2)
                 st.dataframe(table_rest.sort_values(by='GMV', ascending=False), use_container_width=True, hide_index=True)
         else:
             st.warning("Aucune donnée disponible pour cette période dans la partie Ventes.")
@@ -299,7 +317,6 @@ else:
                 fig_time_dist = px.histogram(cw_df, x='delivery time(M)', nbins=40, title="Distribution des Temps de Livraison (min)", template="plotly_white", color_discrete_sequence=['#1ABC9C'])
                 st.plotly_chart(fig_time_dist, use_container_width=True)
                 
-                # Pour un histogramme, un tableau des statistiques descriptives est plus utile
                 st.markdown("**Statistiques des Temps de Livraison (min)**")
                 desc_stats = cw_df['delivery time(M)'].describe().reset_index()
                 desc_stats.columns = ['Statistique', 'Valeur']
@@ -319,7 +336,6 @@ else:
                 fig_scatter = px.scatter(cw_df, x='Distance travel', y='delivery time(M)', color='Driver Type', title="Efficacité : Temps de Trajet vs Distance", template="plotly_white")
                 st.plotly_chart(fig_scatter, use_container_width=True)
                 
-                # Tableau récapitulatif par type de contrat pour le scatter plot
                 eff_stats = cw_df.groupby('Driver Type').agg(Distance_Moyenne_km=('Distance travel', 'mean'), Temps_Moyen_min=('delivery time(M)', 'mean')).reset_index()
                 eff_stats['Distance_Moyenne_km'] = eff_stats['Distance_Moyenne_km'].round(2)
                 eff_stats['Temps_Moyen_min'] = eff_stats['Temps_Moyen_min'].round(1)
