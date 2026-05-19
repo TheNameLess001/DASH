@@ -23,15 +23,13 @@ def load_data(file):
     df['Distance travel'] = pd.to_numeric(df['Distance travel'], errors='coerce')
     df['_date'] = pd.to_datetime(df['order day'], errors='coerce')
     
-    # --- REGLES METIERS (NOUVEAU) ---
-    
+    # --- REGLES METIERS ---
     # 1. Suppression des restaurants de "test" / "fixe" / "avance"
     mots_a_bannir = ['test', 'fixe', 'avance']
     pattern = '|'.join(mots_a_bannir)
     df = df[~df['restaurant name'].str.contains(pattern, case=False, na=False)]
     
     # 2. Regroupement des franchises (Points de ventes multiples)
-    # Ex: "McDonald's - Hermitage" devient "McDonald's"
     df['restaurant name'] = df['restaurant name'].astype(str).str.split(' - ').str[0].str.strip()
 
     return df
@@ -77,10 +75,8 @@ else:
         start_date = end_date = selected_dates[0]
 
     # --- FILTRAGE DES DONNÉES (Actuel vs Précédent) ---
-    # Current Window (CW)
     cw_df = df_global[(df_global['_date'].dt.date >= start_date) & (df_global['_date'].dt.date <= end_date)].copy()
     
-    # Previous Window (PW) - Calcul dynamique
     delta_days = (end_date - start_date).days + 1
     pw_end_date = start_date - datetime.timedelta(days=1)
     pw_start_date = pw_end_date - datetime.timedelta(days=delta_days - 1)
@@ -125,59 +121,77 @@ else:
             # --- City Charts ---
             st.subheader("📍 Performance par Ville (City)")
             city_stats = cw_df.groupby('city').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
-            city_stats['AOV'] = city_stats['GMV'] / city_stats['Requests']
+            city_stats['AOV'] = (city_stats['GMV'] / city_stats['Requests']).round(2)
+            city_stats['GMV'] = city_stats['GMV'].round(2)
 
             col_c1, col_c2, col_c3 = st.columns(3)
             with col_c1:
                 fig_c1 = px.bar(city_stats.sort_values('GMV', ascending=False), x='city', y='GMV', title="GMV by City", template="plotly_white", color_discrete_sequence=['#2980B9'])
                 st.plotly_chart(fig_c1, use_container_width=True)
+                st.dataframe(city_stats[['city', 'GMV']].sort_values('GMV', ascending=False), use_container_width=True, hide_index=True)
             with col_c2:
                 fig_c2 = px.bar(city_stats.sort_values('AOV', ascending=False), x='city', y='AOV', title="AOV by City", template="plotly_white", color_discrete_sequence=['#27AE60'])
                 st.plotly_chart(fig_c2, use_container_width=True)
+                st.dataframe(city_stats[['city', 'AOV']].sort_values('AOV', ascending=False), use_container_width=True, hide_index=True)
             with col_c3:
                 fig_c3 = px.bar(city_stats.sort_values('Requests', ascending=False), x='city', y='Requests', title="Requests by City", template="plotly_white", color_discrete_sequence=['#E67E22'])
                 st.plotly_chart(fig_c3, use_container_width=True)
+                st.dataframe(city_stats[['city', 'Requests']].sort_values('Requests', ascending=False), use_container_width=True, hide_index=True)
             st.markdown("---")
 
             # --- Area Charts ---
             st.subheader("🏘️ Performance par Quartier (Area) - Top 15")
             area_stats = cw_df.groupby('Area').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
-            area_stats['AOV'] = area_stats['GMV'] / area_stats['Requests']
+            area_stats['AOV'] = (area_stats['GMV'] / area_stats['Requests']).round(2)
+            area_stats['GMV'] = area_stats['GMV'].round(2)
             top_areas = area_stats.nlargest(15, 'Requests')
 
             col_a1, col_a2, col_a3 = st.columns(3)
             with col_a1:
-                fig_a1 = px.bar(top_areas.sort_values('GMV', ascending=False), x='Area', y='GMV', title="GMV by Area", template="plotly_white", color_discrete_sequence=['#3498DB'])
+                top_gmv_a = top_areas.sort_values('GMV', ascending=False)
+                fig_a1 = px.bar(top_gmv_a, x='Area', y='GMV', title="GMV by Area", template="plotly_white", color_discrete_sequence=['#3498DB'])
                 st.plotly_chart(fig_a1, use_container_width=True)
+                st.dataframe(top_gmv_a[['Area', 'GMV']], use_container_width=True, hide_index=True)
             with col_a2:
-                fig_a2 = px.bar(top_areas.sort_values('AOV', ascending=False), x='Area', y='AOV', title="AOV by Area", template="plotly_white", color_discrete_sequence=['#2ECC71'])
+                top_aov_a = top_areas.sort_values('AOV', ascending=False)
+                fig_a2 = px.bar(top_aov_a, x='Area', y='AOV', title="AOV by Area", template="plotly_white", color_discrete_sequence=['#2ECC71'])
                 st.plotly_chart(fig_a2, use_container_width=True)
+                st.dataframe(top_aov_a[['Area', 'AOV']], use_container_width=True, hide_index=True)
             with col_a3:
-                fig_a3 = px.bar(top_areas.sort_values('Requests', ascending=False), x='Area', y='Requests', title="Requests by Area", template="plotly_white", color_discrete_sequence=['#F39C12'])
+                top_req_a = top_areas.sort_values('Requests', ascending=False)
+                fig_a3 = px.bar(top_req_a, x='Area', y='Requests', title="Requests by Area", template="plotly_white", color_discrete_sequence=['#F39C12'])
                 st.plotly_chart(fig_a3, use_container_width=True)
+                st.dataframe(top_req_a[['Area', 'Requests']], use_container_width=True, hide_index=True)
             st.markdown("---")
 
-            # --- Top 15 Restaurants Charts (Groupés par enseigne) ---
+            # --- Top 15 Restaurants Charts ---
             st.subheader("🏆 Classement des Enseignes (Top 15 - Multi-points de vente groupés)")
             rest_stats = cw_df.groupby('restaurant name').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
-            rest_stats['AOV'] = rest_stats['GMV'] / rest_stats['Requests']
+            rest_stats['AOV'] = (rest_stats['GMV'] / rest_stats['Requests']).round(2)
+            rest_stats['GMV'] = rest_stats['GMV'].round(2)
 
             col_r1, col_r2, col_r3 = st.columns(3)
             with col_r1:
-                fig_r1 = px.bar(rest_stats.nlargest(15, 'GMV'), x='GMV', y='restaurant name', orientation='h', title="Top 15 par GMV", template="plotly_white", color_discrete_sequence=['#8E44AD'])
+                top_r_gmv = rest_stats.nlargest(15, 'GMV')
+                fig_r1 = px.bar(top_r_gmv, x='GMV', y='restaurant name', orientation='h', title="Top 15 par GMV", template="plotly_white", color_discrete_sequence=['#8E44AD'])
                 fig_r1.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r1, use_container_width=True)
+                st.dataframe(top_r_gmv[['restaurant name', 'GMV']], use_container_width=True, hide_index=True)
             with col_r2:
-                fig_r2 = px.bar(rest_stats.nlargest(15, 'AOV'), x='AOV', y='restaurant name', orientation='h', title="Top 15 par AOV", template="plotly_white", color_discrete_sequence=['#16A085'])
+                top_r_aov = rest_stats.nlargest(15, 'AOV')
+                fig_r2 = px.bar(top_r_aov, x='AOV', y='restaurant name', orientation='h', title="Top 15 par AOV", template="plotly_white", color_discrete_sequence=['#16A085'])
                 fig_r2.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r2, use_container_width=True)
+                st.dataframe(top_r_aov[['restaurant name', 'AOV']], use_container_width=True, hide_index=True)
             with col_r3:
-                fig_r3 = px.bar(rest_stats.nlargest(15, 'Requests'), x='Requests', y='restaurant name', orientation='h', title="Top 15 par Requests", template="plotly_white", color_discrete_sequence=['#D35400'])
+                top_r_req = rest_stats.nlargest(15, 'Requests')
+                fig_r3 = px.bar(top_r_req, x='Requests', y='restaurant name', orientation='h', title="Top 15 par Requests", template="plotly_white", color_discrete_sequence=['#D35400'])
                 fig_r3.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r3, use_container_width=True)
+                st.dataframe(top_r_req[['restaurant name', 'Requests']], use_container_width=True, hide_index=True)
             st.markdown("---")
 
-            # --- Tableau des Restaurants ---
+            # --- Tableau Global des Restaurants ---
             st.subheader("📋 Répertoire Détaillé des Enseignes")
             with st.expander("🔍 Ouvrir les filtres du tableau"):
                 col_f1, col_f2 = st.columns(2)
@@ -227,16 +241,21 @@ else:
                 Utilisations=('order id', 'count'),
                 Total_Discount=('Discount Amount', 'sum')
             ).reset_index()
+            coupon_stats['Total_Discount'] = coupon_stats['Total_Discount'].round(2)
             
             col_m4, col_m5 = st.columns(2)
             with col_m4:
-                fig_coup1 = px.bar(coupon_stats.nlargest(10, 'Utilisations'), x='Utilisations', y='coupon', orientation='h', title="Coupons les plus utilisés", template="plotly_white", color_discrete_sequence=['#8E44AD'])
+                top_c_utils = coupon_stats.nlargest(10, 'Utilisations')
+                fig_coup1 = px.bar(top_c_utils, x='Utilisations', y='coupon', orientation='h', title="Coupons les plus utilisés", template="plotly_white", color_discrete_sequence=['#8E44AD'])
                 fig_coup1.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_coup1, use_container_width=True)
+                st.dataframe(top_c_utils, use_container_width=True, hide_index=True)
             with col_m5:
-                fig_coup2 = px.bar(coupon_stats.nlargest(10, 'Total_Discount'), x='Total_Discount', y='coupon', orientation='h', title="Coût par Coupon (MAD)", template="plotly_white", color_discrete_sequence=['#C0392B'])
+                top_c_disc = coupon_stats.nlargest(10, 'Total_Discount')
+                fig_coup2 = px.bar(top_c_disc, x='Total_Discount', y='coupon', orientation='h', title="Coût par Coupon (MAD)", template="plotly_white", color_discrete_sequence=['#C0392B'])
                 fig_coup2.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_coup2, use_container_width=True)
+                st.dataframe(top_c_disc, use_container_width=True, hide_index=True)
         else:
             st.info("Aucune donnée de coupon (code promo) sur cette période.")
 
@@ -274,10 +293,17 @@ else:
                 hour_stats.columns = ['Heure', 'Commandes']
                 fig_rush = px.bar(hour_stats, x='Heure', y='Commandes', title="Rush Hours (Commandes par Heure)", template="plotly_white", color_discrete_sequence=['#E74C3C'])
                 st.plotly_chart(fig_rush, use_container_width=True)
+                st.dataframe(hour_stats, use_container_width=True, hide_index=True)
                 
             with col_s2:
                 fig_time_dist = px.histogram(cw_df, x='delivery time(M)', nbins=40, title="Distribution des Temps de Livraison (min)", template="plotly_white", color_discrete_sequence=['#1ABC9C'])
                 st.plotly_chart(fig_time_dist, use_container_width=True)
+                
+                # Pour un histogramme, un tableau des statistiques descriptives est plus utile
+                st.markdown("**Statistiques des Temps de Livraison (min)**")
+                desc_stats = cw_df['delivery time(M)'].describe().reset_index()
+                desc_stats.columns = ['Statistique', 'Valeur']
+                st.dataframe(desc_stats, use_container_width=True, hide_index=True)
             st.markdown("---")
 
             col_s3, col_s4 = st.columns(2)
@@ -287,10 +313,17 @@ else:
                 fig_drivers = px.bar(top_drivers, x='Courses', y='Livreur', orientation='h', title="Top 10 Livreurs (par Volume de courses)", template="plotly_white", color_discrete_sequence=['#F39C12'])
                 fig_drivers.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_drivers, use_container_width=True)
+                st.dataframe(top_drivers, use_container_width=True, hide_index=True)
 
             with col_s4:
                 fig_scatter = px.scatter(cw_df, x='Distance travel', y='delivery time(M)', color='Driver Type', title="Efficacité : Temps de Trajet vs Distance", template="plotly_white")
                 st.plotly_chart(fig_scatter, use_container_width=True)
+                
+                # Tableau récapitulatif par type de contrat pour le scatter plot
+                eff_stats = cw_df.groupby('Driver Type').agg(Distance_Moyenne_km=('Distance travel', 'mean'), Temps_Moyen_min=('delivery time(M)', 'mean')).reset_index()
+                eff_stats['Distance_Moyenne_km'] = eff_stats['Distance_Moyenne_km'].round(2)
+                eff_stats['Temps_Moyen_min'] = eff_stats['Temps_Moyen_min'].round(1)
+                st.dataframe(eff_stats, use_container_width=True, hide_index=True)
             st.markdown("---")
 
             col_s5, col_s6 = st.columns(2)
@@ -301,8 +334,11 @@ else:
                     cancel_stats.columns = ['Motif', 'Nombre']
                     fig_cancel = px.pie(cancel_stats, values='Nombre', names='Motif', hole=0.4, title="Répartition des motifs d'annulation", template="plotly_white")
                     st.plotly_chart(fig_cancel, use_container_width=True)
+                    st.dataframe(cancel_stats, use_container_width=True, hide_index=True)
 
             with col_s6:
                 driver_contract = cw_df.groupby('Driver Type').agg(Commandes=('order id', 'count'), Temps_Moyen=('delivery time(M)', 'mean')).reset_index()
+                driver_contract['Temps_Moyen'] = driver_contract['Temps_Moyen'].round(1)
                 fig_contract = px.bar(driver_contract, x='Driver Type', y='Commandes', color='Temps_Moyen', title="Volume par Type de Contrat (Couleur = Temps Moyen)", template="plotly_white")
                 st.plotly_chart(fig_contract, use_container_width=True)
+                st.dataframe(driver_contract, use_container_width=True, hide_index=True)
