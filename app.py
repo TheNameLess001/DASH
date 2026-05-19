@@ -11,21 +11,32 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. FONCTION DE CHARGEMENT OPTIMISÉE (CACHE) ---
+# --- 2. FONCTION DE CHARGEMENT OPTIMISÉE ET NETTOYAGE ---
 @st.cache_data
 def load_data(file):
     df = pd.read_csv(file, low_memory=False)
-    # Nettoyage des données
+    
+    # Conversion des types de données
     df['item total'] = pd.to_numeric(df['item total'], errors='coerce').fillna(0)
     df['delivery time(M)'] = pd.to_numeric(df['delivery time(M)'], errors='coerce')
     df['Discount Amount'] = pd.to_numeric(df['Discount Amount'], errors='coerce').fillna(0)
     df['Distance travel'] = pd.to_numeric(df['Distance travel'], errors='coerce')
-    
-    # Création d'une colonne de date exploitable
     df['_date'] = pd.to_datetime(df['order day'], errors='coerce')
+    
+    # --- REGLES METIERS (NOUVEAU) ---
+    
+    # 1. Suppression des restaurants de "test" / "fixe" / "avance"
+    mots_a_bannir = ['test', 'fixe', 'avance']
+    pattern = '|'.join(mots_a_bannir)
+    df = df[~df['restaurant name'].str.contains(pattern, case=False, na=False)]
+    
+    # 2. Regroupement des franchises (Points de ventes multiples)
+    # Ex: "McDonald's - Hermitage" devient "McDonald's"
+    df['restaurant name'] = df['restaurant name'].astype(str).str.split(' - ').str[0].str.strip()
+
     return df
 
-# --- FONCTION DE CALCUL DU POURCENTAGE ---
+# --- FONCTION DE CALCUL DU POURCENTAGE WoW ---
 def wow_delta(cw_val, pw_val):
     if pd.isna(pw_val) or pw_val == 0:
         return "0.0%"
@@ -43,7 +54,7 @@ if uploaded_file is None:
     st.title("Bienvenue sur votre Dashboard de Business Intelligence 👋")
     st.info("👈 Veuillez uploader votre fichier CSV dans la barre latérale pour commencer.")
 else:
-    # On charge la data globale
+    # On charge la data globale propre
     df_global = load_data(uploaded_file)
     
     # --- FILTRE DE DATE (SIDEBAR) ---
@@ -51,7 +62,6 @@ else:
     min_date = df_global['_date'].min().date()
     max_date = df_global['_date'].max().date()
     
-    # Sélection de la date (par défaut, on prend tout le fichier)
     selected_dates = st.sidebar.date_input(
         "Sélectionnez une plage de dates",
         value=(min_date, max_date),
@@ -61,17 +71,16 @@ else:
     
     st.sidebar.markdown("💡 **Astuce :** La progression compare automatiquement la période sélectionnée avec la période précédente équivalente.")
 
-    # Gestion des erreurs si l'utilisateur ne sélectionne qu'une seule date
     if len(selected_dates) == 2:
         start_date, end_date = selected_dates
     else:
         start_date = end_date = selected_dates[0]
 
-    # --- FILTRAGE DES DONNÉES (Période Actuelle vs Période Précédente) ---
-    # 1. Données de la période sélectionnée (Current Window)
+    # --- FILTRAGE DES DONNÉES (Actuel vs Précédent) ---
+    # Current Window (CW)
     cw_df = df_global[(df_global['_date'].dt.date >= start_date) & (df_global['_date'].dt.date <= end_date)].copy()
     
-    # 2. Calcul des dates de la période précédente exacte (Previous Window)
+    # Previous Window (PW) - Calcul dynamique
     delta_days = (end_date - start_date).days + 1
     pw_end_date = start_date - datetime.timedelta(days=1)
     pw_start_date = pw_end_date - datetime.timedelta(days=delta_days - 1)
@@ -95,13 +104,11 @@ else:
     with tab_sales:
         st.subheader("Indicateurs Clés de Performance (KPIs)")
         
-        # Calculs Actuels (CW)
         cw_req = len(cw_df)
         cw_del = len(cw_df[cw_df['status'] == 'Delivered'])
         cw_gmv = cw_df['item total'].sum()
         cw_aov = cw_gmv / cw_req if cw_req > 0 else 0
         
-        # Calculs Précédents (PW)
         pw_req = len(pw_df)
         pw_del = len(pw_df[pw_df['status'] == 'Delivered'])
         pw_gmv = pw_df['item total'].sum()
@@ -114,7 +121,7 @@ else:
         col4.metric("AOV (Panier Moyen)", f"{cw_aov:,.2f} MAD", wow_delta(cw_aov, pw_aov))
         st.markdown("---")
 
-        if cw_req > 0: # Si on a des données dans la période
+        if cw_req > 0:
             # --- City Charts ---
             st.subheader("📍 Performance par Ville (City)")
             city_stats = cw_df.groupby('city').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
@@ -150,28 +157,28 @@ else:
                 st.plotly_chart(fig_a3, use_container_width=True)
             st.markdown("---")
 
-            # --- Top 10 Restaurants Charts ---
-            st.subheader("🏆 Classement des Restaurants")
+            # --- Top 15 Restaurants Charts (Groupés par enseigne) ---
+            st.subheader("🏆 Classement des Enseignes (Top 15 - Multi-points de vente groupés)")
             rest_stats = cw_df.groupby('restaurant name').agg(Requests=('order id', 'count'), GMV=('item total', 'sum')).reset_index()
             rest_stats['AOV'] = rest_stats['GMV'] / rest_stats['Requests']
 
             col_r1, col_r2, col_r3 = st.columns(3)
             with col_r1:
-                fig_r1 = px.bar(rest_stats.nlargest(10, 'GMV'), x='GMV', y='restaurant name', orientation='h', title="Top 10 by GMV", template="plotly_white", color_discrete_sequence=['#8E44AD'])
+                fig_r1 = px.bar(rest_stats.nlargest(15, 'GMV'), x='GMV', y='restaurant name', orientation='h', title="Top 15 par GMV", template="plotly_white", color_discrete_sequence=['#8E44AD'])
                 fig_r1.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r1, use_container_width=True)
             with col_r2:
-                fig_r2 = px.bar(rest_stats.nlargest(10, 'AOV'), x='AOV', y='restaurant name', orientation='h', title="Top 10 by AOV", template="plotly_white", color_discrete_sequence=['#16A085'])
+                fig_r2 = px.bar(rest_stats.nlargest(15, 'AOV'), x='AOV', y='restaurant name', orientation='h', title="Top 15 par AOV", template="plotly_white", color_discrete_sequence=['#16A085'])
                 fig_r2.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r2, use_container_width=True)
             with col_r3:
-                fig_r3 = px.bar(rest_stats.nlargest(10, 'Requests'), x='Requests', y='restaurant name', orientation='h', title="Top 10 by Requests", template="plotly_white", color_discrete_sequence=['#D35400'])
+                fig_r3 = px.bar(rest_stats.nlargest(15, 'Requests'), x='Requests', y='restaurant name', orientation='h', title="Top 15 par Requests", template="plotly_white", color_discrete_sequence=['#D35400'])
                 fig_r3.update_layout(yaxis={'categoryorder':'total ascending'})
                 st.plotly_chart(fig_r3, use_container_width=True)
             st.markdown("---")
 
             # --- Tableau des Restaurants ---
-            st.subheader("📋 Répertoire Détaillé des Restaurants")
+            st.subheader("📋 Répertoire Détaillé des Enseignes")
             with st.expander("🔍 Ouvrir les filtres du tableau"):
                 col_f1, col_f2 = st.columns(2)
                 ville_filter = col_f1.multiselect("Filtrer par Ville", options=cw_df['city'].dropna().unique())
@@ -182,7 +189,7 @@ else:
             if area_filter: df_filtered = df_filtered[df_filtered['Area'].isin(area_filter)]
 
             if not df_filtered.empty:
-                table_rest = df_filtered.groupby(['restaurant name', 'city', 'Area']).agg(
+                table_rest = df_filtered.groupby(['restaurant name', 'city']).agg(
                     Requests=('order id', 'count'),
                     Delivered=('status', lambda x: (x == 'Delivered').sum()),
                     GMV=('item total', 'sum')
@@ -200,12 +207,10 @@ else:
     with tab_marketing:
         st.subheader("Acquisition & Rétention")
         
-        # Calculs Actuels
         cw_users = cw_df['customer Phone'].nunique()
         cw_coup = len(cw_df[cw_df['coupon'].notna() & (cw_df['coupon'] != ' ')])
         cw_coup_rate = cw_coup / cw_req if cw_req > 0 else 0
         
-        # Calculs Précédents
         pw_users = pw_df['customer Phone'].nunique()
         pw_coup = len(pw_df[pw_df['coupon'].notna() & (pw_df['coupon'] != ' ')])
         pw_coup_rate = pw_coup / pw_req if pw_req > 0 else 0
@@ -242,14 +247,12 @@ else:
     with tab_ops:
         st.subheader("Performance de la Flotte (Supply)")
         
-        # Calculs Actuels
         cw_del_time = cw_df['delivery time(M)'].mean()
         cw_dist = cw_df['Distance travel'].mean()
         cw_canc = len(cw_df[cw_df['status'] == 'Cancelled'])
         cw_canc_rate = cw_canc / cw_req if cw_req > 0 else 0
         cw_pay = pd.to_numeric(cw_df['driver payout'], errors='coerce').sum()
         
-        # Calculs Précédents
         pw_del_time = pw_df['delivery time(M)'].mean()
         pw_dist = pw_df['Distance travel'].mean()
         pw_canc = len(pw_df[pw_df['status'] == 'Cancelled'])
@@ -264,7 +267,6 @@ else:
         st.markdown("---")
 
         if cw_req > 0:
-            # --- LIGNE 1 : Rush Hours & Distribution du temps ---
             col_s1, col_s2 = st.columns(2)
             with col_s1:
                 cw_df['hour'] = pd.to_datetime(cw_df['order time'], format='%H:%M:%S', errors='coerce').dt.hour
@@ -278,7 +280,6 @@ else:
                 st.plotly_chart(fig_time_dist, use_container_width=True)
             st.markdown("---")
 
-            # --- LIGNE 2 : Top Livreurs & Efficacité ---
             col_s3, col_s4 = st.columns(2)
             with col_s3:
                 top_drivers = cw_df['driver name'].value_counts().head(10).reset_index()
@@ -292,7 +293,6 @@ else:
                 st.plotly_chart(fig_scatter, use_container_width=True)
             st.markdown("---")
 
-            # --- LIGNE 3 : Annulations & Type de Contrat ---
             col_s5, col_s6 = st.columns(2)
             with col_s5:
                 df_cancel = cw_df[cw_df['cancellation reason '].notna() & (cw_df['cancellation reason '] != ' ') & (cw_df['cancellation reason '] != 'N/A')]
