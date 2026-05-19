@@ -19,6 +19,9 @@ def load_data(file):
     df['delivery time(M)'] = pd.to_numeric(df['delivery time(M)'], errors='coerce')
     df['Discount Amount'] = pd.to_numeric(df['Discount Amount'], errors='coerce').fillna(0)
     df['Distance travel'] = pd.to_numeric(df['Distance travel'], errors='coerce')
+    
+    # Création d'une colonne de date au format datetime pour les calculs Week over Week
+    df['_date'] = pd.to_datetime(df['order day'], errors='coerce')
     return df
 
 # --- 3. BARRE LATÉRALE (SIDEBAR) ---
@@ -35,6 +38,23 @@ if uploaded_file is None:
 else:
     df = load_data(uploaded_file)
     
+    # --- PREPARATION DES DONNEES WoW (Week over Week) ---
+    max_d = df['_date'].max()
+    # Semaine en cours (7 derniers jours)
+    cw_start = max_d - pd.Timedelta(days=6)
+    cw_df = df[df['_date'] >= cw_start]
+    
+    # Semaine précédente (les 7 jours d'avant)
+    pw_start = max_d - pd.Timedelta(days=13)
+    pw_df = df[(df['_date'] >= pw_start) & (df['_date'] < cw_start)]
+
+    # Fonction pour calculer le pourcentage de croissance
+    def wow_delta(cw_val, pw_val):
+        if pd.isna(pw_val) or pw_val == 0:
+            return "0.0% WoW"
+        pct = ((cw_val - pw_val) / pw_val) * 100
+        return f"{pct:.1f}% WoW"
+
     st.title("📊 Tableau de Bord Stratégique & Opérationnel")
     st.write("") # Espace
 
@@ -50,16 +70,24 @@ else:
     with tab_sales:
         st.subheader("Indicateurs Clés de Performance (KPIs)")
         
+        # Calculs Totaux
         requests = len(df)
         delivered = len(df[df['status'] == 'Delivered'])
         gmv = df['item total'].sum()
         aov = gmv / requests if requests > 0 else 0
         
+        # Calculs WoW
+        cw_req, pw_req = len(cw_df), len(pw_df)
+        cw_del, pw_del = len(cw_df[cw_df['status'] == 'Delivered']), len(pw_df[pw_df['status'] == 'Delivered'])
+        cw_gmv, pw_gmv = cw_df['item total'].sum(), pw_df['item total'].sum()
+        cw_aov = cw_gmv / cw_req if cw_req > 0 else 0
+        pw_aov = pw_gmv / pw_req if pw_req > 0 else 0
+        
         col1, col2, col3, col4 = st.columns(4)
-        col1.metric("Requests (Total)", f"{requests:,}")
-        col2.metric("Delivered (Livrées)", f"{delivered:,}")
-        col3.metric("GMV (Chiffre d'Affaires)", f"{gmv:,.0f} MAD")
-        col4.metric("AOV (Panier Moyen)", f"{aov:,.2f} MAD")
+        col1.metric("Requests (Total)", f"{requests:,}", wow_delta(cw_req, pw_req))
+        col2.metric("Delivered (Livrées)", f"{delivered:,}", wow_delta(cw_del, pw_del))
+        col3.metric("GMV (Chiffre d'Affaires)", f"{gmv:,.0f} MAD", wow_delta(cw_gmv, pw_gmv))
+        col4.metric("AOV (Panier Moyen)", f"{aov:,.2f} MAD", wow_delta(cw_aov, pw_aov))
         st.markdown("---")
 
         # --- City Charts ---
@@ -148,13 +176,20 @@ else:
     with tab_marketing:
         st.subheader("Acquisition & Rétention")
         
+        # Calculs Totaux
         unique_users = df['customer Phone'].nunique()
         total_coupons_used = len(df[df['coupon'].notna() & (df['coupon'] != ' ')])
         
+        # Calculs WoW
+        cw_users, pw_users = cw_df['customer Phone'].nunique(), pw_df['customer Phone'].nunique()
+        cw_coup, pw_coup = len(cw_df[cw_df['coupon'].notna() & (cw_df['coupon'] != ' ')]), len(pw_df[pw_df['coupon'].notna() & (pw_df['coupon'] != ' ')])
+        cw_coup_rate = cw_coup / cw_req if cw_req > 0 else 0
+        pw_coup_rate = pw_coup / pw_req if pw_req > 0 else 0
+        
         col_m1, col_m2, col_m3 = st.columns(3)
-        col_m1.metric("👥 New / Unique Users (Reach)", f"{unique_users:,}")
-        col_m2.metric("🎟️ Commandes Promo", f"{total_coupons_used:,}")
-        col_m3.metric("📉 Taux d'utilisation Promo", f"{(total_coupons_used / requests * 100):.1f} %")
+        col_m1.metric("👥 New / Unique Users (Reach)", f"{unique_users:,}", wow_delta(cw_users, pw_users))
+        col_m2.metric("🎟️ Commandes Promo", f"{total_coupons_used:,}", wow_delta(cw_coup, pw_coup))
+        col_m3.metric("📉 Taux d'utilisation Promo", f"{(total_coupons_used / requests * 100):.1f} %", wow_delta(cw_coup_rate, pw_coup_rate))
         st.markdown("---")
         
         df_coupons = df[df['coupon'].notna() & (df['coupon'] != ' ')]
@@ -181,16 +216,30 @@ else:
     with tab_ops:
         st.subheader("Performance de la Flotte (Supply)")
         
+        # Calculs Totaux
         avg_delivery_time = df['delivery time(M)'].mean()
         cancellations = len(df[df['status'] == 'Cancelled'])
         cancel_rate = (cancellations / requests * 100) if requests > 0 else 0
-        total_payout = df['driver payout'].sum()
+        total_payout = pd.to_numeric(df['driver payout'], errors='coerce').sum()
+        
+        # Calculs WoW
+        cw_del_time, pw_del_time = cw_df['delivery time(M)'].mean(), pw_df['delivery time(M)'].mean()
+        cw_dist, pw_dist = cw_df['Distance travel'].mean(), pw_df['Distance travel'].mean()
+        cw_canc, pw_canc = len(cw_df[cw_df['status'] == 'Cancelled']), len(pw_df[pw_df['status'] == 'Cancelled'])
+        cw_canc_rate = cw_canc / cw_req if cw_req > 0 else 0
+        pw_canc_rate = pw_canc / pw_req if pw_req > 0 else 0
+        cw_pay = pd.to_numeric(cw_df['driver payout'], errors='coerce').sum()
+        pw_pay = pd.to_numeric(pw_df['driver payout'], errors='coerce').sum()
         
         col_o1, col_o2, col_o3, col_o4 = st.columns(4)
-        col_o1.metric("⏱️ Temps de Livraison Moyen", f"{avg_delivery_time:.1f} min")
-        col_o2.metric("📏 Distance Moyenne", f"{df['Distance travel'].mean():.2f} km")
-        col_o3.metric("📉 Taux d'Annulation", f"{cancel_rate:.2f} %")
-        col_o4.metric("💸 Total Driver Payout", f"{total_payout:,.0f} MAD")
+        
+        # NOTE : Utilisation de delta_color="inverse" car ici, une HAUSSE de temps, distance ou d'annulation est NÉGATIVE
+        col_o1.metric("⏱️ Temps de Livraison Moyen", f"{avg_delivery_time:.1f} min", wow_delta(cw_del_time, pw_del_time), delta_color="inverse")
+        col_o2.metric("📏 Distance Moyenne", f"{df['Distance travel'].mean():.2f} km", wow_delta(cw_dist, pw_dist), delta_color="inverse")
+        col_o3.metric("📉 Taux d'Annulation", f"{cancel_rate:.2f} %", wow_delta(cw_canc_rate, pw_canc_rate), delta_color="inverse")
+        
+        # Pour les paiements (Payout), une hausse est normale si le volume augmente, donc delta normal
+        col_o4.metric("💸 Total Driver Payout", f"{total_payout:,.0f} MAD", wow_delta(cw_pay, pw_pay))
         st.markdown("---")
 
         # --- LIGNE 1 : Rush Hours & Distribution du temps ---
